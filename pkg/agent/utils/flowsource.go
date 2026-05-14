@@ -166,7 +166,19 @@ func (h *HostLocal) FlowsMap() (map[string][]*ovs.Flow, error) {
 			F(9, 1000, "", "drop"),
 		)
 	}
-	{
+	hcn := h.HostConfig.HostNetworkConfig(h.Bridge)
+	if hcn != nil {
+		hcnIP, _, _ := hcn.IPMAC()
+		_, hcnGwMAC, _ := hcn.GatewayIPMac()
+		if hcnIP != nil && hcnGwMAC != nil {
+			flows = append(flows,
+				F(0, 27900, T("in_port={{.PortNoPhy}},ip,nw_dst={{.IP}},ct_state=-trk"), "ct(table=6,zone=1,nat)"),
+				F(6, 200, T("ip,ct_zone=1,ct_state=+trk,nw_dst={{.IP}}"), "normal"),
+				F(6, 100, "ip", "drop"),
+			)
+		}
+	}
+	if len(h.HostLocalNets) > 0 {
 		// prevent hostlocal IPs leaking outside of host
 		for i := range h.HostLocalNets {
 			netConf := h.HostLocalNets[i]
@@ -389,8 +401,11 @@ func (g *Guest) FlowsMapForNic(nic *GuestNIC) ([]*ovs.Flow, error) {
 			if isNicHostLocal(hcn, nic) {
 				g.eachIP(m, func(T2 func(string) string) {
 					flows = append(flows,
+						// allow host local nic to communicate with local gateway IP only
 						F(0, 39011, T2(fmt.Sprintf("in_port=LOCAL,arp,arp_spa=%s,arp_tpa={{.IP}}", nic.Gateway)), FakeArpRespActions(nic.MAC)),
 						F(0, 39010, T2(fmt.Sprintf("in_port={{.PortNo}},arp,dl_src={{.MAC}},arp_sha={{.MAC}},arp_spa={{.IP}},arp_tpa=%s", nic.Gateway)), FakeArpRespActions(hcn.mac.String())),
+						// deny host local nic to send any broadcast or multicast packets of ipv4 packets
+						F(0, 27700, T2("in_port={{.PortNo}},dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,ip"), "drop"),
 					)
 				})
 			} else {
@@ -457,64 +472,12 @@ func (g *Guest) FlowsMapForNic(nic *GuestNIC) ([]*ovs.Flow, error) {
 			}
 		}
 
-		if g.HostConfig.DisableSecurityGroup {
-			if !g.SrcIpCheck() {
-				flows = append(flows,
-					F(0, 26870, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ip"), "normal"),
-					F(0, 25870, T("in_port={{.PortNo}},dl_src={{.MAC}},ip"), "normal"),
-					F(0, 24770, T("dl_dst={{.MAC}},ip"), "normal"),
-				)
-				if nic.EnableIPv6() {
-					flows = append(flows,
-						F(0, 26870, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6"), "normal"),
-						F(0, 25870, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6"), "normal"),
-						F(0, 24770, T("dl_dst={{.MAC}},ipv6"), "normal"),
-					)
-				}
-			} else {
-				g.eachIP(m, func(T2 func(string) string) {
-					// allow anythin from local ip
-					flows = append(flows,
-						F(0, 26870, T2("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ip,nw_dst={{.IP}}"), "normal"),
-						F(0, 25870, T2("in_port={{.PortNo}},dl_src={{.MAC}},ip,nw_src={{.IP}}"), "normal"),
-						F(0, 24770, T2("dl_dst={{.MAC}},ip,nw_dst={{.IP}}"), "normal"),
-					)
-				})
-				// drop others
-				flows = append(flows,
-					F(0, 26860, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ip"), "drop"),
-					F(0, 25860, T("in_port={{.PortNo}},dl_src={{.MAC}},ip"), "drop"),
-					F(0, 24760, T("dl_dst={{.MAC}},ip"), "drop"),
-				)
-				if nic.EnableIPv6() {
-					flows = append(flows,
-						// allow for ipv6 IP
-						F(0, 26870, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6,ipv6_dst={{.IP6}}"), "normal"),
-						F(0, 25870, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6,ipv6_src={{.IP6}}"), "normal"),
-						F(0, 24770, T("dl_dst={{.MAC}},ipv6,ipv6_dst={{.IP6}}"), "normal"),
-						// allow for link local IP
-						F(0, 26871, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6,ipv6_dst={{.IP6LOCAL}}"), "normal"),
-						F(0, 25871, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6,ipv6_src={{.IP6LOCAL}}"), "normal"),
-						F(0, 24771, T("dl_dst={{.MAC}},ipv6,ipv6_dst={{.IP6LOCAL}}"), "normal"),
-						// drop others
-						F(0, 26860, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6"), "drop"),
-						F(0, 25860, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6"), "drop"),
-						F(0, 24760, T("dl_dst={{.MAC}},ipv6"), "drop"),
-					)
-				}
-			}
-			// flows = append(flows,
-			//	F(0, 23600, T("in_port={{.PortNo}},dl_src={{.MAC}}"), "normal"),
-			// )
-		}
 		flows = append(flows,
 			F(0, 25760, T("in_port={{.PortNo}},arp"), "drop"),
 			F(0, 24660, T("in_port={{.PortNo}}"), "drop"),
 		)
 	}
-	if !g.HostConfig.DisableSecurityGroup {
-		flows = append(flows, g.SecurityRules.Flows(g, nic, m)...)
-	}
+	flows = append(flows, g.SecurityRules.Flows(g, hcn, nic, m)...)
 	return flows, nil
 }
 
@@ -553,8 +516,8 @@ func (g *Guest) eachIP(data map[string]interface{}, cb func(func(string) string)
 	}
 }
 
-func (sr *SecurityRules) Flows(g *Guest, nic *GuestNIC, data map[string]interface{}) []*ovs.Flow {
-	if len(nic.IP) > 0 {
+func (sr *SecurityRules) Flows(g *Guest, hcn *HostConfigNetwork, nic *GuestNIC, data map[string]interface{}) []*ovs.Flow {
+	/*if len(nic.IP) > 0 {
 		data["IP"] = nic.IP
 	} else {
 		delete(data, "IP")
@@ -563,82 +526,108 @@ func (sr *SecurityRules) Flows(g *Guest, nic *GuestNIC, data map[string]interfac
 		data["IP6"] = nic.IP6
 	} else {
 		delete(data, "IP6")
-	}
+	}*/
 	T := t(data)
 	data["_in_port_vm"] = "reg0=0x10000/0x10000"
 	data["_in_port_not_vm"] = "reg0=0x0/0x10000"
 	loadReg0BitVm := "load:0x1->NXM_NX_REG0[16]" // "0x1->" is important, not "1->"
-	var loadZone, loadZoneDstVM string
-	{
-		s := fmt.Sprintf("0x%x", data["CT_ZONE"])
-		if data["CT_ZONE"] == 0 {
-			s = "0" // always 0, not 0x0
-		}
-		loadZone = fmt.Sprintf("load:%s->NXM_NX_REG0[0..15]", s)
-		loadZoneDstVM = fmt.Sprintf("load:%s->NXM_NX_REG1[0..15]", s)
+	// var loadZone string
+	// var loadZoneDstVM string
+	// {
+	// 	s := fmt.Sprintf("0x%x", data["CT_ZONE"])
+	// 	if data["CT_ZONE"] == 0 {
+	// 		s = "0" // always 0, not 0x0
+	// 	}
+	// 	loadZone = fmt.Sprintf("load:%s->NXM_NX_REG0[0..15]", s)
+	// 	loadZoneDstVM = fmt.Sprintf("load:%s->NXM_NX_REG1[0..15]", s)
+	// }
+
+	connTrack2Table1 := T("ct(table=1)")
+	ingressAction := connTrack2Table1
+	egressAction := loadReg0BitVm + "," + connTrack2Table1
+	if g.HostConfig.DisableSecurityGroup {
+		ingressAction = "normal"
+		egressAction = "normal"
 	}
+
+	localIngressFlow := T("in_port=LOCAL,dl_dst={{.MAC}}")
+	localIngressIp := localIngressFlow + ",ip"
+	localIngressIpv6 := localIngressFlow + ",ipv6"
+
+	ingressFlow := T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}}")
+	ingressIp := ingressFlow + ",ip"
+	ingressIpv6 := ingressFlow + ",ipv6"
+	egressFlow := T("in_port={{.PortNo}},dl_src={{.MAC}}")
+	egressIp := egressFlow + ",ip"
+	egressIpv6 := egressFlow + ",ipv6"
+	ingressOther := T("dl_dst={{.MAC}}")
+	ingressOtherIp := ingressOther + ",ip"
+	ingressOtherIpv6 := ingressOther + ",ipv6"
 
 	flows := []*ovs.Flow{}
 	// table 0
 	// table 1 sec_CT
 	flows = append(flows,
-		F(0, 27300, T("in_port=LOCAL,dl_dst={{.MAC}},ip"), loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-		F(0, 27300, T("in_port=LOCAL,dl_dst={{.MAC}},ipv6"), loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
+		// from local to VM?
+		F(0, 27300, localIngressIp, ingressAction),
+		F(0, 27300, localIngressIpv6, ingressAction),
 	)
 
 	if !g.SrcIpCheck() {
 		flows = append(flows,
-			F(0, 26870, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ip"),
-				loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-			F(0, 25870, T("in_port={{.PortNo}},dl_src={{.MAC}},ip"),
-				loadReg0BitVm+","+loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-			F(0, 24770, T("dl_dst={{.MAC}},ip"),
-				loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
+			F(0, 26870, ingressIp, ingressAction),
+			F(0, 25870, egressIp, egressAction),
+			F(0, 24770, ingressOtherIp, ingressAction),
 		)
-		flows = append(flows,
-			F(0, 26870, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6"),
-				loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-			F(0, 25870, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6"),
-				loadReg0BitVm+","+loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-			F(0, 24770, T("dl_dst={{.MAC}},ipv6"),
-				loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-		)
+		if nic.EnableIPv6() {
+			flows = append(flows,
+				F(0, 26870, ingressIpv6, ingressAction),
+				F(0, 25870, egressIpv6, egressAction),
+				F(0, 24770, ingressOtherIpv6, ingressAction),
+			)
+		}
 	} else {
 		g.eachIP(data, func(T2 func(string) string) {
 			flows = append(flows,
-				F(0, 26870, T2("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ip,nw_dst={{.IP}}"),
-					loadZone+T2(",ct(table=1,zone={{.CT_ZONE}})")),
-				F(0, 25870, T2("in_port={{.PortNo}},dl_src={{.MAC}},ip,nw_src={{.IP}}"),
-					loadReg0BitVm+","+loadZone+T2(",ct(table=1,zone={{.CT_ZONE}})")),
-				F(0, 24770, T2("dl_dst={{.MAC}},ip,nw_dst={{.IP}}"),
-					loadZone+T2(",ct(table=1,zone={{.CT_ZONE}})")),
+				F(0, 26870, ingressIp+T2(",nw_dst={{.IP}}"), ingressAction),
+				F(0, 25870, egressIp+T2(",nw_src={{.IP}}"), egressAction),
+				F(0, 24770, ingressOtherIp+T2(",nw_dst={{.IP}}"), ingressAction),
 			)
 		})
 		flows = append(flows,
-			F(0, 26860, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ip"), "drop"),
-			F(0, 25860, T("in_port={{.PortNo}},dl_src={{.MAC}},ip"), "drop"),
-			F(0, 24760, T("dl_dst={{.MAC}},ip"), "drop"),
+			F(0, 26860, ingressIp, "drop"),
+			F(0, 25860, egressIp, "drop"),
+			F(0, 24760, ingressOtherIp, "drop"),
 		)
-
-		if len(nic.IP6) > 0 {
+		if nic.EnableIPv6() {
 			flows = append(flows,
-				F(0, 26870, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6,ipv6_dst={{.IP6}}"),
-					loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-				F(0, 25870, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6,ipv6_src={{.IP6}}"),
-					loadReg0BitVm+","+loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
-				F(0, 24770, T("dl_dst={{.MAC}},ipv6,ipv6_dst={{.IP6}}"),
-					loadZone+T(",ct(table=1,zone={{.CT_ZONE}})")),
+				F(0, 26871, ingressIpv6+T(",ipv6_dst={{.IP6}}"), ingressAction),
+				F(0, 25871, egressIpv6+T(",ipv6_src={{.IP6}}"), egressAction),
+				F(0, 24771, ingressOtherIpv6+T(",ipv6_dst={{.IP6}}"), ingressAction),
 			)
 			flows = append(flows,
-				F(0, 26860, T("in_port={{.PortNoPhy}},dl_dst={{.MAC}},{{._dl_vlan}},ipv6"), "drop"),
-				F(0, 25860, T("in_port={{.PortNo}},dl_src={{.MAC}},ipv6"), "drop"),
-				F(0, 24760, T("dl_dst={{.MAC}},ipv6"), "drop"),
+				F(0, 26870, ingressIpv6+T(",ipv6_dst={{.IP6LOCAL}}"), ingressAction),
+				F(0, 25870, egressIpv6+T(",ipv6_src={{.IP6LOCAL}}"), egressAction),
+				F(0, 24770, ingressOtherIpv6+T(",ipv6_dst={{.IP6LOCAL}}"), ingressAction),
+			)
+			flows = append(flows,
+				F(0, 26860, ingressIpv6, "drop"),
+				F(0, 25860, egressIpv6, "drop"),
+				F(0, 24760, ingressOtherIpv6, "drop"),
 			)
 		}
 	}
 	flows = append(flows,
+		// allow any traffic from VM that is neither ip nor ipv6, e.g. gre, vrrp
 		F(0, 25600, T("in_port={{.PortNo}},dl_src={{.MAC}}"), "normal"),
 	)
+
+	// table 1: conntrack
+	// table 2: egress filter
+	// table 3: ingress filter
+	// table 4: local traffic handling
+	// table 5: ingress/egress traffic handling
+	// table 6: return host local traffic handling
 
 	if !g.HostConfig.SdnAllowConntrackInvalid {
 		// ct_state= flags order matters
@@ -655,19 +644,24 @@ func (sr *SecurityRules) Flows(g *Guest, nic *GuestNIC, data map[string]interfac
 		)
 	}
 	flows = append(flows,
+		// ingress mew traffic to table 3
 		F(1, 7800, T("ip,ct_state=+new+trk,{{._in_port_not_vm}}"), "resubmit(,3)"),
 		F(1, 7800, T("ipv6,ct_state=+new+trk,{{._in_port_not_vm}}"), "resubmit(,3)"),
+		// egress traffic to table 2
 		F(1, 7700, T("ip,ct_state=+new+trk,{{._in_port_vm}}"), "resubmit(,2)"),
 		F(1, 7700, T("ipv6,ct_state=+new+trk,{{._in_port_vm}}"), "resubmit(,2)"),
+		// other traffic to table 4
 		F(1, 7600, "ip", "resubmit(,4)"),
 		F(1, 7600, "ipv6", "resubmit(,4)"),
-		F(4, 5600, T("ip,dl_dst={{.MAC}}"), loadZoneDstVM+",resubmit(,5),"),
-		F(4, 5600, T("ipv6,dl_dst={{.MAC}}"), loadZoneDstVM+",resubmit(,5),"),
-		F(4, 5500, "ip", "ct(commit,zone=NXM_NX_REG0[0..15]),normal"),
-		F(4, 5500, "ipv6", "ct(commit,zone=NXM_NX_REG0[0..15]),normal"),
+		// ingress traffic to vm goto table 5
+		F(4, 5600, T("ip,dl_dst={{.MAC}}"), "resubmit(,5),"),
+		F(4, 5600, T("ipv6,dl_dst={{.MAC}}"), "resubmit(,5),"),
+		// egress traffic to normal
+		F(4, 5500, "ip", "ct(commit),normal"),
+		F(4, 5500, "ipv6", "ct(commit),normal"),
 	)
 
-	// table sec_CT_OUT
+	// table sec_CT_OUT, egress
 	prioOut := 40000
 	matchOut := T("in_port={{.PortNo}}")
 	for _, r := range sr.outRules {
@@ -686,12 +680,12 @@ func (sr *SecurityRules) Flows(g *Guest, nic *GuestNIC, data map[string]interfac
 		}
 	}
 
-	// table sec_CT_IN
+	// table sec_CT_IN, ingress
 	prioIn := 40000
 	matchIn := T("dl_dst={{.MAC}}")
-	actionAllowIn := loadZoneDstVM + ",resubmit(,5)"
+	actionAllowIn := "resubmit(,5)"
 	for _, r := range sr.inRules {
-		if prioIn <= 30 {
+		if prioIn <= 40 {
 			log.Errorf("%s: %q generated too many in rules",
 				data["IP"], sr.InRulesString())
 			break
@@ -708,14 +702,33 @@ func (sr *SecurityRules) Flows(g *Guest, nic *GuestNIC, data map[string]interfac
 	// NOTE Traffics enter sec_XX table by dl_dst=MAC_VM, except the egress
 	// rule in_port=PORT_VM.  The following rule are for VM accessing hosts
 	// other than locally managed VMs
-	flows = append(flows, F(3, 30, "ip", "ct(commit,zone=NXM_NX_REG0[0..15]),normal"))
-	flows = append(flows, F(3, 30, "ipv6", "ct(commit,zone=NXM_NX_REG0[0..15]),normal"))
+	flows = append(flows, F(3, 30, "ip", "ct(commit),normal"))
+	flows = append(flows, F(3, 30, "ipv6", "ct(commit),normal"))
 
 	flows = append(flows,
-		F(5, 20, T("ip,{{._in_port_not_vm}}"), "ct(commit,zone=NXM_NX_REG1[0..15]),normal"),
-		F(5, 20, T("ipv6,{{._in_port_not_vm}}"), "ct(commit,zone=NXM_NX_REG1[0..15]),normal"),
-		F(5, 10, T("ip,{{._in_port_vm}}"), "ct(commit,zone=NXM_NX_REG1[0..15]),ct(commit,zone=NXM_NX_REG0[0..15]),normal"),
-		F(5, 10, T("ipv6,{{._in_port_vm}}"), "ct(commit,zone=NXM_NX_REG1[0..15]),ct(commit,zone=NXM_NX_REG0[0..15]),normal"),
+		F(5, 20, T("ip,{{._in_port_not_vm}}"), "ct(commit),normal"),
+		F(5, 20, T("ipv6,{{._in_port_not_vm}}"), "ct(commit),normal"),
+	)
+
+	hcnIP, hcnMAC, _ := hcn.IPMAC()
+	_, hcnGwMAC, _ := hcn.GatewayIPMac()
+	if hcnIP != nil && hcnGwMAC != nil && isNicHostLocal(hcn, nic) {
+		// do SNAT
+		startPort, endPort, err := findRandomPortRange()
+		if err != nil {
+			log.Errorf("findRandomPortRange: %s", err)
+			startPort = 32768
+			endPort = 60999
+		}
+		flows = append(flows,
+			F(3, 40, T("ip,reg1=0,{{._in_port_vm}},nw_src={{.IP}}"), T(fmt.Sprintf("ct(commit,zone=1,nat(src=%s:%d-%d,random)),mod_dl_src:%s,mod_dl_dst:%s,output:{{.PortNoPhy}}", hcnIP.String(), startPort, endPort, hcnMAC.String(), hcnGwMAC.String()))),
+			// F(5, 10, T("ip,reg1=0,{{._in_port_vm}},nw_src={{.IP}}"), T(fmt.Sprintf("ct(commit,zone=1,nat(src=%s)),output:{{.PortNoPhy}}", hcnIP.String()))),
+			F(6, 1000, T("ip,ct_zone=1,ct_state=+est+trk,nw_dst={{.IP}}"), T(fmt.Sprintf("mod_dl_src:%s,mod_dl_dst:{{.MAC}},output:{{.PortNo}}", hcnMAC.String()))),
+		)
+	}
+	flows = append(flows,
+		F(5, 10, T("ip,{{._in_port_vm}}"), "ct(commit),normal"),
+		F(5, 10, T("ipv6,{{._in_port_vm}}"), "ct(commit),normal"),
 	)
 	return flows
 }

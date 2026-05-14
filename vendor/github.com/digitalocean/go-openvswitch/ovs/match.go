@@ -53,23 +53,30 @@ const (
 	icmpType    = "icmp_type"
 	ipFrag      = "ip_frag"
 	ipv6DST     = "ipv6_dst"
+	ctIpv6Dst   = "ct_ipv6_dst"
 	ipv6Label   = "ipv6_label"
 	ipv6SRC     = "ipv6_src"
+	ctIpv6Src   = "ct_ipv6_src"
 	metadata    = "metadata"
 	ndSLL       = "nd_sll"
 	ndTarget    = "nd_target"
 	ndTLL       = "nd_tll"
 	nwDST       = "nw_dst"
+	ctNWDst     = "ct_nw_dst"
 	ipDST       = "ip_dst"
 	nwECN       = "nw_ecn"
 	nwProto     = "nw_proto"
+	ctNwProto   = "ct_nw_proto"
 	nwSRC       = "nw_src"
+	ctNwSrc     = "ct_nw_src"
 	ipSRC       = "ip_src"
 	nwTOS       = "nw_tos"
 	nwTTL       = "nw_ttl"
 	tcpFlags    = "tcp_flags"
 	tpDST       = "tp_dst"
 	tpSRC       = "tp_src"
+	ctTpDst     = "ct_tp_dst"
+	ctTpSrc     = "ct_tp_src"
 	tunDST      = "tun_dst"
 	tunFlags    = "tun_flags"
 	tunGbpFlags = "tun_gbp_flags"
@@ -291,6 +298,35 @@ func NetworkSource(ip string) Match {
 		}
 	}
 	return &networkMatch{
+		prefix: "nw_",
+		srcdst: source,
+		ip:     ip,
+	}
+}
+
+func CtNetworkSource(ip string) Match {
+	if strings.EqualFold(ip, "ct_nw_dst") {
+		return &networkAddrMatch{
+			key:   "ct_nw_src",
+			value: "ct_nw_dst",
+		}
+	}
+	return &networkMatch{
+		prefix: "ct_nw_",
+		srcdst: source,
+		ip:     ip,
+	}
+}
+
+func TunNetworkSource(ip string) Match {
+	if strings.EqualFold(ip, "tun_dst") {
+		return &networkAddrMatch{
+			key:   "tun_src",
+			value: "tun_dst",
+		}
+	}
+	return &networkMatch{
+		prefix: "tun_",
 		srcdst: source,
 		ip:     ip,
 	}
@@ -317,6 +353,35 @@ func NetworkDestination(ip string) Match {
 		}
 	}
 	return &networkMatch{
+		prefix: "nw_",
+		srcdst: destination,
+		ip:     ip,
+	}
+}
+
+func CtNetworkDestination(ip string) Match {
+	if strings.EqualFold(ip, "ct_nw_src") {
+		return &networkAddrMatch{
+			key:   "ct_nw_dst",
+			value: "ct_nw_src",
+		}
+	}
+	return &networkMatch{
+		prefix: "ct_nw_",
+		srcdst: destination,
+		ip:     ip,
+	}
+}
+
+func TunNetworkDestination(ip string) Match {
+	if strings.EqualFold(ip, "tun_src") {
+		return &networkAddrMatch{
+			key:   "tun_dst",
+			value: "tun_src",
+		}
+	}
+	return &networkMatch{
+		prefix: "tun_",
 		srcdst: destination,
 		ip:     ip,
 	}
@@ -326,22 +391,38 @@ var _ Match = &networkMatch{}
 
 // A networkMatch is a Match returned by Network{Source,Destination}.
 type networkMatch struct {
+	prefix string
 	srcdst string
 	ip     string
 }
 
 // MarshalText implements Match.
 func (m *networkMatch) MarshalText() ([]byte, error) {
-	return matchIPv4AddressOrCIDR(fmt.Sprintf("nw_%s", m.srcdst), m.ip)
+	return matchIPv4AddressOrCIDR(fmt.Sprintf("%s%s", m.prefix, m.srcdst), m.ip)
 }
 
 // GoString implements Match.
 func (m *networkMatch) GoString() string {
-	if m.srcdst == source {
-		return fmt.Sprintf("ovs.NetworkSource(%q)", m.ip)
-	}
+	switch m.prefix {
+	case "ct_nw_":
+		if m.srcdst == source {
+			return fmt.Sprintf("ovs.CtNetworkSource(%q)", m.ip)
+		}
 
-	return fmt.Sprintf("ovs.NetworkDestination(%q)", m.ip)
+		return fmt.Sprintf("ovs.CtNetworkDestination(%q)", m.ip)
+	case "tun_":
+		if m.srcdst == source {
+			return fmt.Sprintf("ovs.TunNetworkSource(%q)", m.ip)
+		}
+
+		return fmt.Sprintf("ovs.TunNetworkDestination(%q)", m.ip)
+	default:
+		if m.srcdst == source {
+			return fmt.Sprintf("ovs.NetworkSource(%q)", m.ip)
+		}
+
+		return fmt.Sprintf("ovs.NetworkDestination(%q)", m.ip)
+	}
 }
 
 // NetworkECN creates a new networkECN
@@ -622,6 +703,24 @@ func (m *networkProtocolMatch) GoString() string {
 	return fmt.Sprintf("ovs.NetworkProtocol(%d)", m.num)
 }
 
+func CtNetworkProtocol(num uint8) Match {
+	return &ctNetworkProtocolMatch{
+		num: num,
+	}
+}
+
+type ctNetworkProtocolMatch struct {
+	num uint8
+}
+
+func (m *ctNetworkProtocolMatch) MarshalText() ([]byte, error) {
+	return bprintf("%s=%d", ctNwProto, m.num), nil
+}
+
+func (m *ctNetworkProtocolMatch) GoString() string {
+	return fmt.Sprintf("ovs.CtNetworkProtocol(%d)", m.num)
+}
+
 // IPv6Source matches packets with a source IPv6 address or IPv6 CIDR
 // block matching ip.
 func IPv6Source(ip string) Match {
@@ -635,6 +734,11 @@ func IPv6Source(ip string) Match {
 		return &networkAddrMatch{
 			key:   "ipv6_src",
 			value: "ipv6_dst",
+		}
+	case strings.EqualFold(ip, "ct_ipv6_dst"):
+		return &networkAddrMatch{
+			key:   "ct_ipv6_src",
+			value: "ct_ipv6_dst",
 		}
 	}
 	return &ipv6Match{
@@ -656,6 +760,11 @@ func IPv6Destination(ip string) Match {
 		return &networkAddrMatch{
 			key:   "ipv6_dst",
 			value: "ipv6_src",
+		}
+	case strings.EqualFold(ip, "ct_ipv6_src"):
+		return &networkAddrMatch{
+			key:   "ct_ipv6_dst",
+			value: "ct_ipv6_src",
 		}
 	}
 	return &ipv6Match{
