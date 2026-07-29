@@ -15,15 +15,13 @@
 package utils
 
 import (
-	"fmt"
-
 	"yunion.io/x/sdnagent/pkg/tc"
 )
 
 const (
 	OvsLocalPortNo = 65534 // reference: https://github.com/openvswitch/ovs/blob/master/lib/netdev-offload.c#L1214
 
-	DefaultHostHtbRate = 1000 * 1000 * 1000 * 1000 // 1000Gbps
+	// DefaultHostHtbRate = 1000 * 1000 * 1000 * 1000 // 1000Gbps
 
 	ingressAmplifier = 1.0
 	egressAmplifier  = 1.1
@@ -87,7 +85,7 @@ func (td *TcData) ingressQdisc() *tc.QdiscIngress {
 	}
 }
 
-func (td *TcData) hostRootQdisc() []tc.IQdisc {
+/* func (td *TcData) hostRootQdisc() []tc.IQdisc {
 	return []tc.IQdisc{
 		&tc.QdiscHtb{
 			SBaseTcQdisc: &tc.SBaseTcQdisc{
@@ -99,9 +97,9 @@ func (td *TcData) hostRootQdisc() []tc.IQdisc {
 			DefaultClass: OvsLocalPortNo,
 		},
 	}
-}
+} */
 
-func (td *TcData) hostRootClass() []tc.IClass {
+/* func (td *TcData) hostRootClass() []tc.IClass {
 	rootClass := &tc.SHtbClass{
 		SBaseTcClass: &tc.SBaseTcClass{
 			Kind:    "htb",
@@ -124,7 +122,7 @@ func (td *TcData) hostRootClass() []tc.IClass {
 		rootClass,
 		defaultClass,
 	}
-}
+} */
 
 func (td *TcData) guestNicClass() []tc.IClass {
 	return []tc.IClass{
@@ -173,7 +171,7 @@ func (td *TcData) GuestIfbQdiscTree() *tc.QdiscTree {
 }
 
 func (td *TcData) HostRootQdiscTree() *tc.QdiscTree {
-	return tc.NewQdiscTree(td.hostRootQdisc(), td.hostRootClass(), nil)
+	return tc.NewQdiscTree(nil, nil, nil)
 }
 
 func (td *TcData) HostGuestQdiscTree(rootCls tc.IClass, rootQdisc tc.IQdisc) *tc.QdiscTree {

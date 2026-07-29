@@ -25,9 +25,10 @@ const (
 	OvnManRefreshRate         time.Duration = 43 * time.Second
 	OvnMdManRefreshRate       time.Duration = 41 * time.Second
 	EipManRefreshRate         time.Duration = 43 * time.Second
-	WatcherRefreshRate        time.Duration = 31 * time.Second
-	WatcherRefreshRateOnError time.Duration = 3 * time.Second
-	WatcherRecentPendingTime  time.Duration = WatcherRefreshRateOnError * 5
+	WatcherRefreshRate         time.Duration = 31 * time.Second
+	WatcherRefreshRateOnError  time.Duration = 1 * time.Second
+	WatcherPendingFirstRetry   time.Duration = 300 * time.Millisecond
+	WatcherRecentPendingTime   time.Duration = 15 * time.Second
 	IfaceJanitorInterval      time.Duration = 57 * time.Second
 	TapManRefreshRate         time.Duration = 27 * time.Second
 )
