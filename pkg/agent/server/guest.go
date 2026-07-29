@@ -113,6 +113,7 @@ func (g *Guest) setPending() {
 	if g.lastSeenPending == nil {
 		now := time.Now()
 		g.lastSeenPending = &now
+		g.watcher.schedulePendingRetry()
 	}
 }
 
@@ -157,10 +158,7 @@ func (g *Guest) refresh(ctx context.Context) (err error) {
 	someOk1 := g.refreshNicPortNo(ctx, g.VpcNICs)
 	if !someOk0 && !someOk1 {
 		if g.IsVM() && !g.Running() {
-			// we will be notified when its pid is to be updated
-			// so there is no need to set pending for it now
 			err = errNotRunning
-			setPending = false
 		} else {
 			// NOTE crashed container can make pending watcher busy
 			err = errPortNotReady

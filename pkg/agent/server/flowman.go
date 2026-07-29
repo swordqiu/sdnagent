@@ -323,6 +323,7 @@ func (fm *FlowMan) updateFlows(ctx context.Context, who string, ofs []*ovs.Flow)
 }
 
 func (fm *FlowMan) waitDecr(n int32) {
+	log.Infof("flowman %s waitCount %d decrease %d", fm.bridge, fm.waitCount, n)
 	atomic.AddInt32(&fm.waitCount, -n)
 }
 

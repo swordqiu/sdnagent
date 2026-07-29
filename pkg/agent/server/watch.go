@@ -82,6 +82,8 @@ type serversWatcher struct {
 
 	cmdCh chan wCmdReq
 
+	pendingFirstRetryTimer *time.Timer
+
 	bridgeIpNicCache *hashcache.Cache // map[string]*desc.SGuestDesc
 	netIdIpNicCache  *hashcache.Cache // map[string]*desc.SGuestDesc
 }
@@ -207,6 +209,29 @@ func (w *serversWatcher) hasRecentPending() bool {
 	return false
 }
 
+func (w *serversWatcher) schedulePendingRetry() {
+	if w.pendingFirstRetryTimer == nil {
+		return
+	}
+	if !w.pendingFirstRetryTimer.Stop() {
+		select {
+		case <-w.pendingFirstRetryTimer.C:
+		default:
+		}
+	}
+	w.pendingFirstRetryTimer.Reset(WatcherPendingFirstRetry)
+}
+
+func (w *serversWatcher) retryPendingGuests(ctx context.Context) {
+	w.withWait(ctx, func(ctx context.Context) {
+		for _, g := range w.guests {
+			if g.IsPending() {
+				g.UpdateSettings(ctx, false)
+			}
+		}
+	})
+}
+
 func (w *serversWatcher) Start(ctx context.Context, agent *AgentServer) {
 	defer agent.Stop()
 
@@ -255,8 +280,13 @@ func (w *serversWatcher) Start(ctx context.Context, agent *AgentServer) {
 
 	refreshTicker := time.NewTicker(WatcherRefreshRate)
 	pendingRefreshTicker := time.NewTicker(WatcherRefreshRateOnError)
+	w.pendingFirstRetryTimer = time.NewTimer(WatcherPendingFirstRetry)
+	if !w.pendingFirstRetryTimer.Stop() {
+		<-w.pendingFirstRetryTimer.C
+	}
 	defer refreshTicker.Stop()
 	defer pendingRefreshTicker.Stop()
+	defer w.pendingFirstRetryTimer.Stop()
 	for {
 		var pendingChan <-chan time.Time
 		if w.hasRecentPending() {
@@ -304,13 +334,9 @@ func (w *serversWatcher) Start(ctx context.Context, agent *AgentServer) {
 				}
 			}
 		case <-pendingChan:
-			w.withWait(ctx, func(ctx context.Context) {
-				for _, g := range w.guests {
-					if g.IsPending() {
-						g.UpdateSettings(ctx, false)
-					}
-				}
-			})
+			w.retryPendingGuests(ctx)
+		case <-w.pendingFirstRetryTimer.C:
+			w.retryPendingGuests(ctx)
 		case <-refreshTicker.C:
 			w.withWait(ctx, func(ctx context.Context) {
 				w.hostLocal.UpdateSettings(ctx, false)

@@ -261,7 +261,11 @@ func (h *HostLocal) FlowsMap() (map[string][]*ovs.Flow, error) {
 			)
 		} else {
 			flows = append(flows,
+				// allow LACP traffic
+				F(0, 23601, T("in_port={{.PortNoPhy}},dl_type=0x8809"), "normal"),
+				// allow multicast traffic
 				F(0, 23600, T("in_port={{.PortNoPhy}},dl_dst=01:00:00:00:00:00/01:00:00:00:00:00"), "normal"),
+				// drop others
 				F(0, 23500, T("in_port={{.PortNoPhy}}"), "drop"),
 			)
 		}

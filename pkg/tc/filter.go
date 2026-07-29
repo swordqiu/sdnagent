@@ -95,11 +95,8 @@ func (f *SBaseTcFilter) Equals(fi IComparable) bool {
 }
 
 // tc filter replace dev eth0 parent 1: prio 1 handle 10: flower src_ip 192.168.1.10 action mirred egress redirect dev ifb0
-func (f *SBaseTcFilter) basicLineElements(action string, ifname string, isRoot bool) []string {
+func (f *SBaseTcFilter) basicLineElements(action string, ifname string) []string {
 	elms := []string{"filter", action, "dev", ifname}
-	if isRoot {
-		elms = append(elms, "root")
-	}
 	if f.Parent != nil {
 		elms = append(elms, "parent", f.Parent.Id())
 	}
@@ -112,6 +109,7 @@ func (f *SBaseTcFilter) basicLineElements(action string, ifname string, isRoot b
 
 func parseBaseFilter(chunks []string, parents []IQdisc) (*SBaseTcFilter, error) {
 	f := &SBaseTcFilter{}
+	parentId := "ffff:"
 	for i := 0; i < len(chunks); {
 		c := chunks[i]
 		switch c {
@@ -119,16 +117,7 @@ func parseBaseFilter(chunks []string, parents []IQdisc) (*SBaseTcFilter, error) 
 			if i+1 >= len(chunks) {
 				return nil, errors.Wrap(errors.ErrInvalidFormat, "eol before getting parent")
 			}
-			parentId := chunks[i+1]
-			for _, parent := range parents {
-				if parent.Id() == parentId {
-					f.Parent = parent
-					break
-				}
-			}
-			if f.Parent == nil {
-				return nil, errors.Wrap(errors.ErrInvalidFormat, "parent not found")
-			}
+			parentId = chunks[i+1]
 			i += 2
 		case "fw":
 			f.Kind = "fw"
@@ -154,6 +143,17 @@ func parseBaseFilter(chunks []string, parents []IQdisc) (*SBaseTcFilter, error) 
 			i += 2
 		default:
 			i++
+		}
+	}
+	if f.Parent == nil {
+		for _, parent := range parents {
+			if parent.Id() == parentId {
+				f.Parent = parent
+				break
+			}
+		}
+		if f.Parent == nil {
+			return nil, errors.Wrap(errors.ErrInvalidFormat, "parent not found")
 		}
 	}
 	return f, nil
@@ -195,7 +195,7 @@ func (f *SFwFilter) Equals(fi IComparable) bool {
 }
 
 func (f *SFwFilter) basicLineElements(action string, ifname string) []string {
-	elms := f.SBaseTcFilter.basicLineElements(action, ifname, false)
+	elms := f.SBaseTcFilter.basicLineElements(action, ifname)
 	elms = append(elms, "handle", fmt.Sprintf("0x%x", f.Handle))
 	elms = append(elms, "fw")
 	elms = append(elms, "classid", f.ClassId)
@@ -286,7 +286,7 @@ func (f *SU32Filter) Equals(fi IComparable) bool {
 }
 
 func (f *SU32Filter) basicLineElements(action string, ifname string) []string {
-	elms := f.SBaseTcFilter.basicLineElements(action, ifname, false)
+	elms := f.SBaseTcFilter.basicLineElements(action, ifname)
 	if len(f.RedirectDev) > 0 {
 		elms = append(elms,
 			"u32",
@@ -317,7 +317,7 @@ func (f *SU32Filter) ReplaceLine(ifname string) []string {
 
 // tc filter delete dev GUESTNET-170 root protocol ip prio 49152 handle 800::1 u32
 func (f *SU32Filter) DeleteLine(ifname string) []string {
-	elms := f.SBaseTcFilter.basicLineElements("delete", ifname, true)
+	elms := f.SBaseTcFilter.basicLineElements("del", ifname)
 	if len(f.Handle) > 0 {
 		elms = append(elms, "handle", f.Handle)
 	}

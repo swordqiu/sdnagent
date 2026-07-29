@@ -17,7 +17,6 @@ package utils
 import (
 	"crypto/sha256"
 	"fmt"
-	"time"
 
 	"yunion.io/x/log"
 
@@ -119,9 +118,6 @@ type sClassicMetadataDescGetter struct {
 }
 
 func (g *sClassicMetadataDescGetter) Get(ip string) *desc.SGuestDesc {
-	start := time.Now()
-	log.Debugf("Get guest desc by ip %s", ip)
 	guestDesc := g.watcher.FindGuestDescByHostLocalIp(g.hostLocal, ip)
-	log.Debugf("Get guest desc by ip %s cost %f seconds", ip, time.Since(start).Seconds())
 	return guestDesc
 }
