@@ -491,9 +491,12 @@ func (mdf *ovnMdForward) Listen() error {
 		}
 		addr := l.Addr().(*net.TCPAddr)
 		mdf.bindAddr = addr.IP.String()
+		if mdf.bindAddr == "" || mdf.bindAddr == "<nil>" {
+			mdf.bindAddr = mdf.LocalAddr
+		}
 		mdf.bindPort = addr.Port
 		mdf.listener = l
-		return err
+		return nil
 	}
 	return errors.Errorf("unknown protocol: %s", mdf.Proto)
 }
@@ -514,24 +517,34 @@ func (mdf *ovnMdForward) dial() (net.Conn, error) {
 }
 
 func (mdf *ovnMdForward) Serve(ctx context.Context) error {
-	const idleD = 24 * time.Hour
 	notifyC := make(chan utils.Empty)
-	go func() {
-		idleT := time.NewTimer(idleD)
-		for {
-			select {
-			case <-ctx.Done():
-				mdf.listener.Close()
-				return
-			case <-idleT.C:
-				log.Infof("Serve idle timeout %s:%d -> %s:%d", mdf.BindAddr(), mdf.BindPort(), mdf.RemoteAddr, mdf.RemotePort)
-				mdf.listener.Close()
-				return
-			case <-notifyC:
-				idleT.Reset(idleD)
+	if mdf.LocalPort > 0 {
+		// persistent forward (explicit bind port, e.g. port mapping):
+		// close only when context is cancelled
+		go func() {
+			<-ctx.Done()
+			mdf.listener.Close()
+		}()
+	} else {
+		// ephemeral forward: idle timeout
+		const idleD = 24 * time.Hour
+		go func() {
+			idleT := time.NewTimer(idleD)
+			for {
+				select {
+				case <-ctx.Done():
+					mdf.listener.Close()
+					return
+				case <-idleT.C:
+					log.Infof("Serve idle timeout %s:%d -> %s:%d", mdf.BindAddr(), mdf.BindPort(), mdf.RemoteAddr, mdf.RemotePort)
+					mdf.listener.Close()
+					return
+				case <-notifyC:
+					idleT.Reset(idleD)
+				}
 			}
-		}
-	}()
+		}()
+	}
 	for {
 		conn, err := mdf.listener.Accept()
 		if err != nil {
